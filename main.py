@@ -1,13 +1,13 @@
 import json
 import time
-from typing import Optional
+from typing import Optional, Hashable, Any
 
 import dask
+import dask.config
 import torch
 import typer
 import xbatcher
 import xarray as xr
-from arraylake import Client, config
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset as TorchDataset
 from torch import multiprocessing
@@ -44,10 +44,15 @@ class XBatcherPyTorchDataset(TorchDataset):
         # load before stacking
         batch = self.bgen[idx].load()
 
+        print(f"{batch=}")
+
         # Use to_stacked_array to stack without broadcasting,
         stacked = batch.to_stacked_array(
-            new_dim="batch", sample_dims=("time", "longitude", "latitude")
-        ).transpose("time", "batch", ...)
+            new_dim="features", sample_dims=("time", "longitude", "latitude")
+        ).transpose("time", "features", ...)
+
+        print(f"{stacked=}")
+
         x = torch.tensor(stacked.data)
         t1 = time.time()
         print_json(
@@ -62,39 +67,27 @@ class XBatcherPyTorchDataset(TorchDataset):
         return x
 
 
-def setup(source="gcs", patch_size: int = 48, input_steps: int = 3):
+def dataloader_from_gcs(variables: list | None = None, source: str ="gcs", input_steps: int = 2):
+    """
+    Set up a batch generator for data source `source` based on a list of input variables.
+
+    """
     if source == "gcs":
         ds = xr.open_dataset(
             "gs://weatherbench2/datasets/era5/1959-2022-6h-128x64_equiangular_with_poles_conservative.zarr",
             engine="zarr",
             chunks={},
         )
-    elif source == "arraylake":
-        config.set({"s3.endpoint_url": "https://storage.googleapis.com", "s3.anon": True})
-        ds = (
-            Client()
-            .get_repo("earthmover-public/weatherbench2")
-            .to_xarray(
-                group="datasets/era5/1959-2022-6h-128x64_equiangular_with_poles_conservative",
-                chunks={},
-            )
-        )
     else:
-        raise ValueError(f"Unknown source {source}")
+        ds = xr.open_dataset(source, engine="zarr", chunks={})
 
-    DEFAULT_VARS = [
-        "10m_wind_speed",
-        "2m_temperature",
-        "specific_humidity",
-    ]
-
-    ds = ds[DEFAULT_VARS]
-    patch = dict(
-        latitude=patch_size,
-        longitude=patch_size,
+    if variables is not None:
+        ds = ds[variables]
+    # some generic type hints to satisfy the signature of BatchGenerator 
+    patch: dict[Hashable, int] = dict(
         time=input_steps,
     )
-    overlap = dict(latitude=32, longitude=32, time=input_steps // 3 * 2)
+    overlap: dict[Hashable, int] = dict(time=1)
 
     bgen = xbatcher.BatchGenerator(
         ds,
@@ -109,7 +102,7 @@ def setup(source="gcs", patch_size: int = 48, input_steps: int = 3):
 
 
 def main(
-    source: Annotated[str, typer.Option()] = "arraylake",
+    source: Annotated[str, typer.Option()] = "gcs",
     num_epochs: Annotated[int, typer.Option(min=0, max=1000)] = 2,
     num_batches: Annotated[int, typer.Option(min=0, max=1000)] = 3,
     batch_size: Annotated[int, typer.Option(min=0, max=1000)] = 16,
@@ -118,11 +111,11 @@ def main(
     prefetch_factor: Annotated[Optional[int], typer.Option(min=0, max=64)] = None,
     persistent_workers: Annotated[Optional[bool], typer.Option()] = None,
     pin_memory: Annotated[Optional[bool], typer.Option()] = None,
-    train_step_time: Annotated[Optional[float], typer.Option()] = 0.1,
+    train_step_time: Annotated[float, typer.Option()] = 0.1,
     dask_threads: Annotated[Optional[int], typer.Option()] = None,
 ):
     _locals = {k: v for k, v in locals().items() if not k.startswith("_")}
-    data_params = {
+    data_params: dict[str, Any] = {
         "batch_size": batch_size,
     }
     if shuffle is not None:
@@ -166,7 +159,9 @@ def main(
         for i, sample in enumerate(training_generator):
             tt0 = time.time()
             print_json({"event": "training start", "batch": i, "time": tt0})
+            #### MODEL UPDATE GOES HERE ####
             time.sleep(train_step_time)  # simulate model training
+            ################################
             tt1 = time.time()
             print_json({"event": "training end", "batch": i, "time": tt1, "duration": tt1 - tt0})
             if i == num_batches - 1:
@@ -182,4 +177,4 @@ def main(
 
 
 if __name__ == "__main__":
-    typer.run(main)
+    typer.run(main) 
