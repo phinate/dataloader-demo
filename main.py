@@ -102,17 +102,17 @@ def dataloader_from_gcs(variables: list | None = None, source: str ="gcs", input
 
 
 def main(
-    source: Annotated[str, typer.Option()] = "gcs",
-    num_epochs: Annotated[int, typer.Option(min=0, max=1000)] = 2,
-    num_batches: Annotated[int, typer.Option(min=0, max=1000)] = 3,
-    batch_size: Annotated[int, typer.Option(min=0, max=1000)] = 16,
-    shuffle: Annotated[Optional[bool], typer.Option()] = None,
-    num_workers: Annotated[Optional[int], typer.Option(min=0, max=64)] = None,
-    prefetch_factor: Annotated[Optional[int], typer.Option(min=0, max=64)] = None,
-    persistent_workers: Annotated[Optional[bool], typer.Option()] = None,
-    pin_memory: Annotated[Optional[bool], typer.Option()] = None,
-    train_step_time: Annotated[float, typer.Option()] = 0.1,
-    dask_threads: Annotated[Optional[int], typer.Option()] = None,
+    source: str = "gcs",
+    num_epochs: int = 2,
+    num_batches: int = 3,
+    batch_size: int = 16,
+    shuffle: bool | None = None,
+    num_workers: int | None = None,
+    prefetch_factor: int | None = None,
+    persistent_workers: bool | None = None,
+    pin_memory: bool | None = None,
+    train_step_time: float = 0.1,
+    dask_threads: int | None = None
 ):
     _locals = {k: v for k, v in locals().items() if not k.startswith("_")}
     data_params: dict[str, Any] = {
@@ -146,7 +146,7 @@ def main(
 
     t0 = time.time()
     print_json({"event": "setup start", "time": t0})
-    dataset = setup(source=source)
+    dataset = dataloader_from_gcs(source=source)
     training_generator = DataLoader(dataset, **data_params)
     _ = next(iter(training_generator))  # wait until dataloader is ready
     t1 = time.time()
@@ -175,6 +175,3 @@ def main(
         {"event": "run end", "time": run_finish_time, "duration": run_finish_time - run_start_time}
     )
 
-
-if __name__ == "__main__":
-    typer.run(main) 
